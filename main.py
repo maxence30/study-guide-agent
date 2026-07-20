@@ -5,6 +5,9 @@ from google.adk.sessions import InMemorySessionService
 from google.genai import types
 
 from agents.explainer_agent import explainer_agent
+from agents.practice_designer_agent import practice_designer_agent
+from agents.reviewer_agent import reviewer_agent
+
 from tools.file_writer import save_markdown_file
 from tools.validation import validate_required_sections
 
@@ -13,7 +16,7 @@ USER_ID = "user"
 SESSION_ID = "session"
 
 
-async def main():
+async def run_agent(agent, text):
 
     session_service = InMemorySessionService()
 
@@ -24,17 +27,17 @@ async def main():
     )
 
     runner = Runner(
-        agent=explainer_agent,
+        agent=agent,
         app_name=APP_NAME,
         session_service=session_service,
     )
 
-    topic = input("Topic: ")
-
     content = types.Content(
         role="user",
-        parts=[types.Part(text=topic)],
+        parts=[types.Part(text=text)],
     )
+
+    response = ""
 
     async for event in runner.run_async(
         user_id=USER_ID,
@@ -42,26 +45,70 @@ async def main():
         new_message=content,
     ):
         if event.is_final_response():
-
             response = event.content.parts[0].text
 
-            print(response)
+    return response
 
-            save_path = save_markdown_file(
-                "output/study_guide.md",
-                response,
-            )
 
-            print(f"\n✅ Saved to: {save_path}")
+async def main():
 
-            validation = validate_required_sections(response)
+    topic = input("Topic: ")
 
-            if validation["valid"]:
-                print("✅ Validation passed")
-            else:
-                print("\n❌ Missing sections:")
-                for section in validation["missing_sections"]:
-                    print(f"- {section}")
+    print("\nRunning Explainer Agent...\n")
+
+    explanation = await run_agent(
+        explainer_agent,
+        topic,
+    )
+
+    print("Running Practice Designer Agent...\n")
+
+    practice = await run_agent(
+        practice_designer_agent,
+        f"""
+Topic:
+
+{topic}
+
+Explanation:
+
+{explanation}
+""",
+    )
+
+    draft = explanation + "\n\n" + practice
+
+    print("Running Reviewer Agent...\n")
+
+    review = await run_agent(
+        reviewer_agent,
+        draft,
+    )
+
+    final_markdown = draft + "\n\n" + review
+
+    validation = validate_required_sections(
+        final_markdown
+    )
+
+    save_markdown_file(
+        "output/study_guide.md",
+        final_markdown,
+    )
+
+    print(final_markdown)
+
+    print("\n---------------------------")
+
+    if validation["valid"]:
+        print("Validation passed")
+    else:
+        print("Missing sections:")
+
+        for section in validation["missing_sections"]:
+            print("-", section)
+
+    print("\nSaved in output/study_guide.md")
 
 
 if __name__ == "__main__":
